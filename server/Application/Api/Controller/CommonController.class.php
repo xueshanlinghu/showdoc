@@ -59,7 +59,11 @@ class CommonController extends BaseController
 
   public function createCaptcha()
   {
-    $captcha = rand(1000, 9999);
+    if (version_compare(PHP_VERSION, COMPOSER_PHP_VERSION, '>')) {
+      $captcha = get_rand_str(4);
+    } else {
+      $captcha = rand(1000, 9999);
+    }
     $data = array(
       "mobile" => "",
       "captcha" => $captcha,
@@ -72,7 +76,7 @@ class CommonController extends BaseController
   public function showCaptcha()
   {
     $captcha_id = I("captcha_id/d");
-    $captcha = D("Captcha")->where("captcha_id = '$captcha_id' ")->find();
+    $captcha = D("Captcha")->where("captcha_id = '%s' ", array($captcha_id))->find();
 
     if (version_compare(PHP_VERSION, COMPOSER_PHP_VERSION, '>')) {
       $builder = new CaptchaBuilder($captcha['captcha']);
@@ -107,11 +111,15 @@ class CommonController extends BaseController
   {
     $home_page = D("Options")->get("home_page");
     $home_item = D("Options")->get("home_item");
+    $open_api_key = D("Options")->get("open_api_key");
     $beian = D("Options")->get("beian");
+    $register_open = D("Options")->get("register_open");
     $array = array(
       "home_page" => $home_page,
       "home_item" => $home_item,
       "beian" => $beian ? $beian : '',
+      "is_show_ai" => $open_api_key ? 1 : 0,
+      "register_open" => $register_open === false ? 1 : intval($register_open),
     );
     $this->sendResult($array);
   }

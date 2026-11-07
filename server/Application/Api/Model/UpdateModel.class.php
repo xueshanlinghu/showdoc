@@ -16,7 +16,7 @@ class UpdateModel
     //检测数据库并更新
     public function checkDb()
     {
-        $version_num = 13;
+        $version_num = 27;
         $db_version_num = D("Options")->get("db_version_num");
         if (!$db_version_num || $db_version_num < $version_num) {
             $r = $this->updateSqlite();
@@ -151,6 +151,12 @@ class UpdateModel
             D("ItemMember")->execute($sql);
         }
 
+        //page表增加page_addtime字段
+        if (!$this->_is_column_exist("Page", "page_addtime")) {
+            $sql = "ALTER TABLE " . C('DB_PREFIX') . "page ADD page_addtime INT( 11 ) NOT NULL DEFAULT '0'  ;";
+            D("Page")->execute($sql);
+        }
+
         //创建team表
         $sql = "CREATE TABLE IF NOT EXISTS `team` (
         `id`  INTEGER PRIMARY KEY ,
@@ -271,6 +277,16 @@ class UpdateModel
         //team_item_member表增加cat_id字段
         if (!$this->_is_column_exist("team_item_member", "cat_id")) {
             $sql = "ALTER TABLE " . C('DB_PREFIX') . "team_item_member ADD cat_id INT( 10 ) NOT NULL DEFAULT '0'  ;";
+            D("User")->execute($sql);
+        }
+
+        // 为多目录权限支持新增字段：item_member.cat_ids、team_item_member.cat_ids（逗号分隔字符串）
+        if (!$this->_is_column_exist("item_member", "cat_ids")) {
+            $sql = "ALTER TABLE " . C('DB_PREFIX') . "item_member ADD cat_ids text NOT NULL DEFAULT ''  ;";
+            D("User")->execute($sql);
+        }
+        if (!$this->_is_column_exist("team_item_member", "cat_ids")) {
+            $sql = "ALTER TABLE " . C('DB_PREFIX') . "team_item_member ADD cat_ids text NOT NULL DEFAULT ''  ;";
             D("User")->execute($sql);
         }
 
@@ -492,6 +508,213 @@ class UpdateModel
             $sql = "ALTER TABLE " . C('DB_PREFIX') . "team_member ADD team_member_group_id int(10) NOT NULL DEFAULT '1' ;";
             D("mock")->execute($sql);
         }
+
+        //给user表增加salt字段
+        if (!$this->_is_column_exist("user", "salt")) {
+            $sql = "ALTER TABLE " . C('DB_PREFIX') . "user ADD salt CHAR(2000) NOT NULL DEFAULT '' ;";
+            D("mock")->execute($sql);
+        }
+
+        //创建item_star表
+        $sql = "CREATE TABLE IF NOT EXISTS `item_star` (
+            `id`  INTEGER PRIMARY KEY ,
+            `uid` int(11) NOT NULL DEFAULT '0',
+            `item_id` int(11) NOT NULL DEFAULT '0',
+            `s_number` int(11) NOT NULL DEFAULT '0',
+            `created_at` CHAR(2000) NOT NULL DEFAULT '',
+            `updated_at` CHAR(2000) NOT NULL DEFAULT ''
+            )";
+        D("User")->execute($sql);
+
+        //给page表增加ext_info字段
+        if (!$this->_is_column_exist("page", "ext_info")) {
+            $sql = "ALTER TABLE " . C('DB_PREFIX') . "page ADD ext_info CHAR(2000) NOT NULL DEFAULT '' ;";
+            D("page")->execute($sql);
+        }
+
+        //给page_history表增加ext_info字段
+        if (!$this->_is_column_exist("page_history", "ext_info")) {
+            $sql = "ALTER TABLE " . C('DB_PREFIX') . "page_history ADD ext_info CHAR(2000) NOT NULL DEFAULT '' ;";
+            D("page")->execute($sql);
+        }
+
+        // 创建 export_log 表（记录导出行为）
+        $sql = "CREATE TABLE IF NOT EXISTS `export_log` (
+            `id`  INTEGER PRIMARY KEY ,
+            `uid` int(11) NOT NULL DEFAULT '0',
+            `export_type` CHAR(200) NOT NULL DEFAULT '',
+            `item_id` int(11) NOT NULL DEFAULT '0',
+            `addtime` CHAR(200) NOT NULL DEFAULT ''
+        )";
+        D("User")->execute($sql);
+
+        // 检查 upload_file 表是否有 last_visit_time 字段，如果没有则添加
+        if (!$this->_is_column_exist("upload_file", "last_visit_time")) {
+            $sql = "ALTER TABLE " . C('DB_PREFIX') . "upload_file ADD last_visit_time INT(11) NOT NULL DEFAULT '0';";
+            D("User")->execute($sql);
+        }
+
+        // 设置自增id从 10000000 开始
+        $randomNumber1 = mt_rand(100000000, 299999999);
+        $randomNumber2 = mt_rand(400000000, 499999999);
+        $randomNumber3 = mt_rand(600000000, 699999999);
+        D("page")->execute("INSERT INTO sqlite_sequence (name, seq) VALUES ('page', {$randomNumber1})");
+        D("page")->execute("INSERT INTO sqlite_sequence (name, seq) VALUES ('catalog', {$randomNumber2})");
+        D("page")->execute("INSERT INTO sqlite_sequence (name, seq) VALUES ('item', {$randomNumber3})");
+
+        //创建user_setting表
+        $sql = "CREATE TABLE IF NOT EXISTS `user_setting` (
+        `id`  INTEGER PRIMARY KEY ,
+        `uid` int(10) NOT NULL DEFAULT '0',
+        `key_name` CHAR(200) NOT NULL DEFAULT '',
+        `key_value` text NOT NULL DEFAULT '' ,
+        `addtime` text NOT NULL DEFAULT ''
+        )";
+        D("UserSetting")->execute($sql);
+
+        //给single_page表增加expire_time字段
+        if (!$this->_is_column_exist("single_page", "expire_time")) {
+            $sql = "ALTER TABLE " . C('DB_PREFIX') . "single_page ADD expire_time INT(11) NOT NULL DEFAULT '0';";
+            D("page")->execute($sql);
+        }
+
+        // 创建参数描述库表 parameter_description_entry（SQLite 版本）
+        $sql = "CREATE TABLE IF NOT EXISTS `parameter_description_entry` (
+        `id` TEXT PRIMARY KEY,
+        `item_id` TEXT NOT NULL,
+        `name` TEXT NOT NULL,
+        `type` TEXT NOT NULL,
+        `description` TEXT NOT NULL,
+        `example` TEXT,
+        `default_value` TEXT,
+        `aliases` TEXT,
+        `tags` TEXT,
+        `path` TEXT,
+        `source` TEXT NOT NULL DEFAULT 'manual' CHECK (source IN ('manual','auto-extracted','builtin')),
+        `status` TEXT NOT NULL DEFAULT 'permanent' CHECK (status IN ('temp','permanent')),
+        `usage_count` INTEGER NOT NULL DEFAULT 0,
+        `quality_score` NUMERIC NOT NULL DEFAULT 0.00,
+        `created_by` TEXT NOT NULL,
+        `created_at` TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP),
+        `updated_at` TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP)
+        )";
+        D("User")->execute($sql);
+
+        // 唯一约束与索引
+        $sql = "CREATE UNIQUE INDEX IF NOT EXISTS uk_item_name_type ON parameter_description_entry (item_id, name, type)";
+        D("User")->execute($sql);
+        $sql = "CREATE INDEX IF NOT EXISTS idx_item_id ON parameter_description_entry (item_id)";
+        D("User")->execute($sql);
+        $sql = "CREATE INDEX IF NOT EXISTS idx_name ON parameter_description_entry (name)";
+        D("User")->execute($sql);
+        $sql = "CREATE INDEX IF NOT EXISTS idx_type ON parameter_description_entry (type)";
+        D("User")->execute($sql);
+        $sql = "CREATE INDEX IF NOT EXISTS idx_status ON parameter_description_entry (status)";
+        D("User")->execute($sql);
+        $sql = "CREATE INDEX IF NOT EXISTS idx_created_at ON parameter_description_entry (created_at)";
+        D("User")->execute($sql);
+        $sql = "CREATE INDEX IF NOT EXISTS idx_updated_at ON parameter_description_entry (updated_at)";
+        D("User")->execute($sql);
+
+        // 自动更新时间触发器
+        $sql = "DROP TRIGGER IF EXISTS trg_parameter_description_entry_updated_at";
+        D("User")->execute($sql);
+        $sql = "CREATE TRIGGER trg_parameter_description_entry_updated_at AFTER UPDATE ON parameter_description_entry
+        BEGIN
+          UPDATE parameter_description_entry SET updated_at = CURRENT_TIMESTAMP WHERE id = NEW.id;
+        END;";
+        D("User")->execute($sql);
+
+        //创建page_comment表（页面评论表）
+        $sql = "CREATE TABLE IF NOT EXISTS `page_comment` (
+            `comment_id`  INTEGER PRIMARY KEY ,
+            `page_id` int(11) NOT NULL DEFAULT '0',
+            `item_id` int(11) NOT NULL DEFAULT '0',
+            `parent_id` int(11) NOT NULL DEFAULT '0',
+            `uid` int(11) NOT NULL DEFAULT '0',
+            `username` CHAR(200) NOT NULL DEFAULT '',
+            `content` text NOT NULL DEFAULT '',
+            `is_deleted` int(1) NOT NULL DEFAULT '0',
+            `addtime` int(11) NOT NULL DEFAULT '0'
+            )";
+        D("User")->execute($sql);
+
+        //创建page_feedback表（页面质量反馈表）
+        $sql = "CREATE TABLE IF NOT EXISTS `page_feedback` (
+            `feedback_id`  INTEGER PRIMARY KEY ,
+            `page_id` int(11) NOT NULL DEFAULT '0',
+            `item_id` int(11) NOT NULL DEFAULT '0',
+            `uid` int(11) NOT NULL DEFAULT '0',
+            `client_id` CHAR(200) DEFAULT NULL,
+            `feedback_type` int(1) NOT NULL DEFAULT '0',
+            `addtime` int(11) NOT NULL DEFAULT '0'
+            )";
+        D("User")->execute($sql);
+
+        //为page_feedback表创建唯一索引（登录用户）
+        $sql = "CREATE UNIQUE INDEX IF NOT EXISTS unique_user_feedback ON page_feedback (page_id, uid)";
+        D("User")->execute($sql);
+
+        //为page_feedback表创建唯一索引（游客）
+        $sql = "CREATE UNIQUE INDEX IF NOT EXISTS unique_client_feedback ON page_feedback (page_id, client_id)";
+        D("User")->execute($sql);
+
+        //item表增加allow_comment字段
+        if (!$this->_is_column_exist("Item", "allow_comment")) {
+            $sql = "ALTER TABLE " . C('DB_PREFIX') . "item ADD allow_comment INT( 1 ) NOT NULL DEFAULT '0'  ;";
+            D("ItemMember")->execute($sql);
+        }
+
+        //item表增加allow_feedback字段
+        if (!$this->_is_column_exist("Item", "allow_feedback")) {
+            $sql = "ALTER TABLE " . C('DB_PREFIX') . "item ADD allow_feedback INT( 1 ) NOT NULL DEFAULT '0'  ;";
+            D("ItemMember")->execute($sql);
+        }
+
+        //清理可能存在的冲突数据：将登录用户的空字符串client_id改为NULL
+        D("User")->execute("UPDATE page_feedback SET client_id = NULL WHERE uid > 0 AND (client_id = '' OR client_id IS NULL)");
+
+        //创建item_ai_config表（项目AI知识库配置表）
+        $sql = "CREATE TABLE IF NOT EXISTS `item_ai_config` (
+            `id`  INTEGER PRIMARY KEY ,
+            `item_id` int(11) NOT NULL DEFAULT '0',
+            `enabled` int(1) NOT NULL DEFAULT '0',
+            `dialog_collapsed` int(1) NOT NULL DEFAULT '1',
+            `welcome_message` text NOT NULL DEFAULT '',
+            `addtime` int(11) NOT NULL DEFAULT '0',
+            `updatetime` int(11) NOT NULL DEFAULT '0'
+            )";
+        D("User")->execute($sql);
+
+        //为item_ai_config表创建唯一索引
+        $sql = "CREATE UNIQUE INDEX IF NOT EXISTS uk_item_id ON item_ai_config (item_id)";
+        D("User")->execute($sql);
+        $sql = "CREATE INDEX IF NOT EXISTS idx_enabled ON item_ai_config (enabled)";
+        D("User")->execute($sql);
+
+        //创建runapi_db_config表（数据库连接配置表）
+        $sql = "CREATE TABLE IF NOT EXISTS `runapi_db_config` (
+            `id`  INTEGER PRIMARY KEY ,
+            `item_id` int(11) NOT NULL DEFAULT '0',
+            `env_id` int(11) NOT NULL DEFAULT '0',
+            `config_name` CHAR(100) NOT NULL DEFAULT '默认',
+            `db_type` CHAR(20) NOT NULL DEFAULT 'mysql',
+            `host` CHAR(255) NOT NULL DEFAULT '',
+            `port` int(11) NOT NULL DEFAULT '0',
+            `username` CHAR(255) NOT NULL DEFAULT '',
+            `password` CHAR(255) NOT NULL DEFAULT '',
+            `database` CHAR(255) NOT NULL DEFAULT '',
+            `options` text NOT NULL DEFAULT '',
+            `is_default` int(1) NOT NULL DEFAULT '0',
+            `addtime` CHAR(2000) NOT NULL DEFAULT '',
+            `last_update_time` CHAR(2000) NOT NULL DEFAULT '',
+            `uid` int(11) NOT NULL DEFAULT '0'
+            )";
+        D("User")->execute($sql);
+
+        //为runapi_db_config表创建唯一索引（item_id, env_id, config_name）
+        $sql = "CREATE UNIQUE INDEX IF NOT EXISTS uniq_item_env_name ON runapi_db_config (item_id, env_id, config_name)";
+        D("User")->execute($sql);
 
         //留个注释提醒自己，如果更新数据库结构，务必更改checkDb()里面的$version_num
         //留个注释提醒自己，如果更新数据库结构，务必更改checkDb()里面的$version_num

@@ -1,1 +1,2 @@
-<?php echo file_get_contents('index.html'); ?>
+<?php
+readfile('index.html');

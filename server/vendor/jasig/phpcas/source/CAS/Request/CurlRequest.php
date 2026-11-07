@@ -17,7 +17,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * PHP Version 5
+ * PHP Version 7
  *
  * @file     CAS/Request/CurlRequest.php
  * @category Authentication
@@ -86,7 +86,9 @@ implements CAS_Request_RequestInterface
 
         }
         // close the CURL session
-        curl_close($ch);
+        if (PHP_VERSION_ID < 80000) {
+            curl_close($ch);
+        }
 
         phpCAS::traceEnd($res);
         return $res;
@@ -106,14 +108,7 @@ implements CAS_Request_RequestInterface
         *********************************************************/
         $ch = curl_init($this->url);
 
-        if (version_compare(PHP_VERSION, '5.1.3', '>=')) {
-            //only avaible in php5
-            curl_setopt_array($ch, $this->_curlOptions);
-        } else {
-            foreach ($this->_curlOptions as $key => $value) {
-                curl_setopt($ch, $key, $value);
-            }
-        }
+        curl_setopt_array($ch, $this->_curlOptions);
 
         /*********************************************************
          * Set SSL configuration
@@ -166,6 +161,11 @@ implements CAS_Request_RequestInterface
             curl_setopt($ch, CURLOPT_POST, 1);
             curl_setopt($ch, CURLOPT_POSTFIELDS, $this->postBody);
         }
+
+        /*********************************************************
+         * Set User Agent
+         *********************************************************/
+        curl_setopt($ch, CURLOPT_USERAGENT, 'phpCAS/' . phpCAS::getVersion());
 
         return $ch;
     }

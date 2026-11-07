@@ -43,19 +43,14 @@ class BaseController extends Controller
 	public function checkLogin($redirect = true)
 	{
 
-		//debug
-		if ($this->is_local_debug > 0) {
-			$login_user = D("User")->where("username = 'showdoc' ")->find();
-			session("login_user", $login_user);
-		}
-
 		if (!session("login_user")) {
-			$cookie_token = I("user_token") ? I("user_token") : cookie('cookie_token');
-			if ($cookie_token) {
-				$ret = D("UserToken")->getToken($cookie_token);
+			$user_token = I("user_token") ? I("user_token") : cookie('cookie_token');
+			$user_token = $user_token ? $user_token : $_REQUEST['user_token'];
+			if ($user_token) {
+				$ret = D("UserToken")->getToken($user_token);
 				if ($ret && $ret['token_expire'] > time()) {
-					D("UserToken")->setLastTime($cookie_token);
-					$login_user = D("User")->where("uid = $ret[uid]")->find();
+					D("UserToken")->setLastTime($user_token);
+					$login_user = D("User")->where(array('uid' => $ret['uid']))->find();
 					unset($ret['password']);
 					session("login_user", $login_user);
 					return $login_user;
@@ -99,11 +94,6 @@ class BaseController extends Controller
 			$result['data'] = $array;
 		}
 
-		if ($this->is_local_debug > 0) {
-			header('Access-Control-Allow-Origin: *'); //允许跨域请求
-			header('Access-Control-Allow-Headers: Origin, X-Requested-With, Content-Type, Accept, Connection, User-Agent, Cookie');
-			header('Access-Control-Allow-Credentials: true'); //允许跨域请求
-		}
 
 		echo json_encode($result);
 
@@ -125,13 +115,6 @@ class BaseController extends Controller
 	protected function sendError($error_code, $error_message = '')
 	{
 		$error_code = $error_code ? $error_code : 10103;
-
-		//来自Html5Plus的应用允许跨域
-		if (strstr($_SERVER['HTTP_USER_AGENT'], "Html5Plus")) {
-			header('Access-Control-Allow-Origin: *'); //允许跨域请求
-			header('Access-Control-Allow-Headers: Origin, X-Requested-With, Content-Type, Accept, Connection, User-Agent, Cookie');
-			header('Access-Control-Allow-Credentials : true'); //允许跨域请求
-		}
 
 		if (!$error_message) {
 			$error_codes = C("error_codes");
@@ -190,10 +173,10 @@ class BaseController extends Controller
 			return true;
 		}
 
-		if (D("ItemMember")->where("item_id = '%d'  and member_group_id = 2 and uid = '$uid' ", array($item_id))->find()) {
+		if (D("ItemMember")->where("item_id = '%d'  and member_group_id = 2 and uid = '%d' ", array($item_id, $uid))->find()) {
 			return true;
 		}
-		if (D("TeamItemMember")->where("item_id = '%d'  and member_group_id = 2 and member_uid = '$uid' ", array($item_id))->find()) {
+		if (D("TeamItemMember")->where("item_id = '%d'  and member_group_id = 2 and member_uid = '%d' ", array($item_id, $uid))->find()) {
 			return true;
 		}
 
@@ -246,7 +229,7 @@ class BaseController extends Controller
 		}
 
 		$item = D("Item")->where("item_id = '%d' ", array($item_id))->find();
-		if ($item['password']) {
+		if ($item['password'] && $item['password'] != I('_item_pwd')) { // _item_pwd参数的作用在于：跨域请求的时候无法带cooies，自然无法记住session。用这个参数使记住用户输入过项目密码。
 			return false;
 		} else {
 			return true;
@@ -287,8 +270,12 @@ class BaseController extends Controller
 			return true;
 		}
 
-		$team_member = D("TeamMember")->where("team_id = '%d' and member_uid = '$uid' and team_member_group_id = 2  ", array($team_id))->find();
+		$team_member = D("TeamMember")->where("team_id = '%d' and member_uid = '%d' and team_member_group_id = 2  ", array($team_id, $uid))->find();
 		if ($team_member) {
+			return true;
+		}
+
+		if ($this->checkAdmin(false)) {
 			return true;
 		}
 

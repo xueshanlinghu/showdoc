@@ -1,0 +1,45 @@
+name: ci
+
+on:
+  push:
+    branches:
+      - "master"
+
+jobs:
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v2
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+      - name: Login to DockerHub
+        uses: docker/login-action@v2
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      # arm64: use the default patched base (webdevops/php-nginx:8.3-alpine, php2shell fixed)
+      - name: Build and push (arm64, patched PHP)
+        uses: docker/build-push-action@v4
+        with:
+          context: .
+          push: true
+          tags: star7th/showdoc:arm-latest
+          file: Dockerfile
+          platforms: |
+            linux/arm64
+      # arm/v7: webdevops base does not support v7; keep wordpress:php8.1
+      # (unfixed PHP, Dockerfile bakes php2shell mitigation ini)
+      - name: Build and push (arm/v7, legacy base + mitigation)
+        uses: docker/build-push-action@v4
+        with:
+          context: .
+          push: true
+          tags: star7th/showdoc:arm-latest
+          file: Dockerfile
+          build-args: |
+            BASE_IMAGE=wordpress:php8.1
+          platforms: |
+            linux/arm/v7

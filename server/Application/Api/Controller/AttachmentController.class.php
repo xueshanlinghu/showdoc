@@ -13,13 +13,170 @@ class AttachmentController extends BaseController
         echo 'Attachment';
     }
 
+    // 管理员：获取未被使用的附件列表（分页）
+    public function getUnusedList()
+    {
+        $login_user = $this->checkLogin();
+        $this->checkAdmin(); // 仅管理员可用
+
+        $page = I("page/d") ? I("page/d") : 1;
+        $count = I("count/d") ? I("count/d") : 10;
+        $display_name = I("display_name"); // 可选过滤
+        $username = I("username"); // 可选过滤：上传者
+
+        $where = ' 1 = 1 ';
+        $params = array();
+        if ($display_name) {
+            $like = safe_like($display_name);
+            $where .= " and display_name  like '%s' ";
+            $params[] = $like;
+        }
+        if ($username) {
+            $uid = D("User")->where(array('username' => $username))->getField('uid');
+            $uid = $uid ? $uid  : -99;
+            $where .= " and uid  = '%d' ";
+            $params[] = $uid;
+        }
+
+        // 获取所有附件，通过检查page.page_content来判断是否被使用
+        // 开源版无分表，直接检查page.page_content
+        $candidates = isset($params)
+            ? D("UploadFile")->where($where, $params)->order("addtime desc")->select()
+            : D("UploadFile")->where($where)->order("addtime desc")->select();
+
+        $unused = array();
+        if ($candidates) {
+            foreach ($candidates as $value) {
+                // 在页面内容中进行like匹配：sign是MD5加密串，重复率很小，直接搜索即可
+                $referenced = false;
+                if (!empty($value['sign'])) {
+                    $sign = $value['sign'];
+                    $likeSign = safe_like($sign);
+                    
+                    // 直接搜索sign字符串（MD5加密串重复率很小）
+                    $cnt = M("Page")->where(" page_content like '%s' ", array('%' . $likeSign . '%'))->count();
+                    if ($cnt > 0) {
+                        $referenced = true;
+                    }
+                    
+                    // 也检查页面历史版本（开源版无分表，直接查询）
+                    if (!$referenced) {
+                        $cnt = M("PageHistory")->where(" page_content like '%s' ", array('%' . $likeSign . '%'))->count();
+                        if ($cnt > 0) {
+                            $referenced = true;
+                        }
+                    }
+                }
+                
+                // 如果sign检测未找到，再检测real_url
+                if (!$referenced && !empty($value['real_url'])) {
+                    $realUrl = $value['real_url'];
+                    $likeUrl = safe_like($realUrl);
+                    $cnt2 = M("Page")->where(" page_content like '%s' ", array('%' . $likeUrl . '%'))->count();
+                    if ($cnt2 > 0) {
+                        $referenced = true;
+                    }
+                    
+                    // 也检查页面历史版本中的real_url（开源版无分表，直接查询）
+                    if (!$referenced) {
+                        $cnt2 = M("PageHistory")->where(" page_content like '%s' ", array('%' . $likeUrl . '%'))->count();
+                        if ($cnt2 > 0) {
+                            $referenced = true;
+                        }
+                    }
+                }
+
+                if ($referenced) {
+                    continue; // 被内容引用，跳过
+                }
+
+                // 视为未使用
+                $username_text = '';
+                if ($value['uid']) {
+                    $username_text = D("User")->where(" uid = '%d' ", array($value['uid']))->getField('username');
+                }
+                $url = '';
+                if ($value['sign']) {
+                    $url =  server_url("api/attachment/visitFile", array("sign" => $value['sign']));
+                } else {
+                    $url =  $value['real_url'];
+                }
+                $unused[] = array(
+                    "file_id" => $value['file_id'],
+                    "username" => $username_text,
+                    "uid" => $value['uid'],
+                    "file_type" => $value['file_type'],
+                    "visit_times" => $value['visit_times'],
+                    "file_size" => $value['file_size'],
+                    "file_size_m" => round($value['file_size'] / (1024 * 1024), 3),
+                    "display_name" => $value['display_name'] ? $value['display_name'] : '',
+                    "url" => $url,
+                    "addtime" => date("Y-m-d H:i:s", $value['addtime']),
+                    "last_visit_time" => date("Y-m-d H:i:s", $value['last_visit_time']),
+                );
+            }
+        }
+
+        $total = count($unused);
+        // 简单分页（内存切片）
+        $offset = max(0, ($page - 1) * $count);
+        $list = array_slice($unused, $offset, $count);
+
+        $return = array();
+        $return['list'] = $list;
+        $return['total'] = $total;
+        $used = 0;
+        foreach ($unused as $f) {
+            $used += intval($f['file_size']);
+        }
+        $return['used'] = $used;
+        $return['used_m'] = round($used / (1024 * 1024), 3);
+        $this->sendResult($return);
+    }
+
+    // 管理员：批量删除附件（用于清理未使用）
+    public function batchDeleteAttachments()
+    {
+        $login_user = $this->checkLogin();
+        $this->checkAdmin();
+
+        // 支持 file_ids 数组或逗号分隔字符串
+        $file_ids = I("post.file_ids");
+        if (!$file_ids) {
+            $this->sendError(10101, '缺少参数');
+            return;
+        }
+
+        if (is_string($file_ids)) {
+            $file_ids = explode(',', $file_ids);
+        }
+        if (!is_array($file_ids)) {
+            $file_ids = array();
+        }
+
+        $success = 0;
+        $failed = 0;
+        foreach ($file_ids as $fid) {
+            $fid = intval($fid);
+            if ($fid <= 0) continue;
+            $ret = D("Attachment")->deleteFile($fid);
+            if ($ret) {
+                $success++;
+            } else {
+                $failed++;
+            }
+        }
+
+        $this->sendResult(array('success' => $success, 'failed' => $failed));
+    }
+
     //浏览附件
     public function visitFile()
     {
         $sign = I("sign");
         $imageView2 = I("imageView2");
         $d = D("UploadFile");
-        $ret = $d->where(" sign = '%s' ", array($sign))->find();
+        $ret = $d->where(array('sign' => $sign))->find();
         if ($ret) {
             $beyond_the_quota = 0;
             $days = ceil((time() - $ret['addtime']) / 86400); //自添加图片以来的天数
@@ -35,7 +192,7 @@ class AttachmentController extends BaseController
                 return;
             }
 
-            $d->where(" sign = '%s' ", array($sign))->save(array("visit_times" => $ret['visit_times'] + 1, "last_visit_time" => time()));
+            $d->where(array('sign' => $sign))->save(array("visit_times" => $ret['visit_times'] + 1, "last_visit_time" => time()));
             //记录用户流量
             D("Attachment")->recordUserFlow($ret['uid'], $ret['file_size']);
 
@@ -57,6 +214,9 @@ class AttachmentController extends BaseController
                 && !strstr(strtolower($file_path), '.jpg')
                 && !strstr(strtolower($file_path), '.png')
                 && !strstr(strtolower($file_path), '.pdf')
+                && !strstr(strtolower($file_path), '.doc')
+                && !strstr(strtolower($file_path), '.xls')
+                && !strstr(strtolower($file_path), '.ppt')
             ) {
                 $this->_downloadFile($file_path, $ret['display_name']);
             } else {
@@ -116,7 +276,7 @@ class AttachmentController extends BaseController
         }
 
         if (!D("Attachment")->isAllowedFilename($uploadFile['name'])) {
-            $this->sendError(10101, '不支持上传该文件类型。如有需要请联系网站管理员');
+            $this->sendError(10101, '为了安全考虑，不支持上传该文件类型。你可以将文件压缩到压缩包后再上传');
             return false;
         }
 
@@ -136,7 +296,7 @@ class AttachmentController extends BaseController
             return;
         }
         $return = array();
-        $files = D("UploadFile")->join(" file_page on file_page.file_id = upload_file.file_id")->field("upload_file.* , file_page.item_id as item_id ,file_page.page_id as page_id  ")->where("file_page.page_id = '$page_id' ")->order("file_page.addtime desc")->select();
+        $files = D("UploadFile")->join(" file_page on file_page.file_id = upload_file.file_id")->field("upload_file.* , file_page.item_id as item_id ,file_page.page_id as page_id  ")->where("file_page.page_id = '%d' ", array($page_id))->order("file_page.addtime desc")->select();
         if ($files) {
             $item_id = $files[0]['item_id'];
             if (!$this->checkItemVisit($login_user['uid'], $item_id)) {
@@ -167,16 +327,16 @@ class AttachmentController extends BaseController
         $login_user = $this->checkLogin();
         $file_id = I("file_id/d") ? I("file_id/d") : 0;
         $page_id = I("page_id/d") ? I("page_id/d") : 0;
-        $count = D("FilePage")->where(" file_id = '$file_id' and page_id > 0   ")->count();
+        $count = D("FilePage")->where(" file_id = '%d' and page_id > 0   ", array($file_id))->count();
         if ($count <= 1) {
             $this->deleteMyAttachment();
         } else {
-            $page = M("Page")->where(" page_id = '$page_id' ")->find();
+            $page = M("Page")->where(array('page_id' => $page_id))->find();
             if (!$this->checkItemEdit($login_user['uid'], $page['item_id'])) {
                 $this->sendError(10103);
                 return;
             }
-            $res = D("FilePage")->where(" file_id = '$file_id' and page_id = '$page_id'   ")->delete();
+            $res = D("FilePage")->where(" file_id = '%d' and page_id = '%d'   ", array($file_id, $page_id))->delete();
             if ($res) {
                 $this->sendResult(array());
             } else {
@@ -204,21 +364,22 @@ class AttachmentController extends BaseController
             $where .= " and file_type not like '%image%' ";
         }
         if ($display_name) {
-            $display_name =  \SQLite3::escapeString($display_name);
-            $where .= " and display_name  like '%{$display_name}%' ";
+            $like = safe_like($display_name);
+            $where .= " and display_name  like '%s' ";
+            $params[] = $like;
         }
         if ($username) {
-            $username =  \SQLite3::escapeString($username);
-            $uid = D("User")->where(" username = '{$username}' ")->getField('uid');
+            $uid = D("User")->where(array('username' => $username))->getField('uid');
             $uid = $uid ? $uid  : -99;
-            $where .= " and uid  = '{$uid}' ";
+            $where .= " and uid  = '%d' ";
+            $params[] = $uid;
         }
-        $files = D("UploadFile")->where($where)->order("addtime desc")->page($page, $count)->select();
+        $files = isset($params) ? D("UploadFile")->where($where, $params)->order("addtime desc")->page($page, $count)->select() : D("UploadFile")->where($where)->order("addtime desc")->page($page, $count)->select();
         if ($files) {
             foreach ($files as $key => $value) {
                 $username = '';
                 if ($value['uid']) {
-                    $username = D("User")->where(" uid = {$value['uid']} ")->getField('username');
+                    $username = D("User")->where(" uid = '%d' ", array($value['uid']))->getField('username');
                 }
                 $url = '';
                 if ($value['sign']) {
@@ -243,7 +404,7 @@ class AttachmentController extends BaseController
                 );
             }
         }
-        $return['total'] = D("UploadFile")->where($where)->count();
+        $return['total'] = isset($params) ? D("UploadFile")->where($where, $params)->count() : D("UploadFile")->where($where)->count();
         $used = D("UploadFile")->where($where)->getField('sum(file_size)');
         $return['used'] = $used;
         $return['used_m'] = round($used / (1024 * 1024), 3);
@@ -257,7 +418,7 @@ class AttachmentController extends BaseController
         $this->checkAdmin(); //重要，校验管理员身份
         $file_id = I("file_id/d") ? I("file_id/d") : 0;
 
-        $file = D("UploadFile")->where("file_id = '$file_id' ")->find();
+        $file = D("UploadFile")->where(array('file_id' => $file_id))->find();
 
         $ret = D("Attachment")->deleteFile($file_id);
         if ($ret) {
@@ -285,10 +446,11 @@ class AttachmentController extends BaseController
             $where .= " and file_type not like '%image%' ";
         }
         if ($display_name) {
-            $display_name =  \SQLite3::escapeString($display_name);
-            $where .= " and display_name  like '%{$display_name}%' ";
+            $like = safe_like($display_name);
+            $where .= " and display_name  like '%s' ";
+            $params[] = $like;
         }
-        $files = D("UploadFile")->where($where)->order("addtime desc")->page($page, $count)->select();
+        $files = isset($params) ? D("UploadFile")->where($where, $params)->order("addtime desc")->page($page, $count)->select() : D("UploadFile")->where($where)->order("addtime desc")->page($page, $count)->select();
         if ($files) {
             foreach ($files as $key => $value) {
                 $username = '';
@@ -308,7 +470,7 @@ class AttachmentController extends BaseController
                 );
             }
         }
-        $return['total'] = D("UploadFile")->where($where)->count();
+        $return['total'] = isset($params) ? D("UploadFile")->where($where, $params)->count() : D("UploadFile")->where($where)->count();
         $used = D("UploadFile")->where($where)->getField('sum(file_size)');
         $return['used'] = $used;
         $return['used_m'] = round($used / (1024 * 1024), 3);
@@ -324,7 +486,7 @@ class AttachmentController extends BaseController
         $login_user = $this->checkLogin();
         $file_id = I("file_id/d") ? I("file_id/d") : 0;
 
-        $file = D("UploadFile")->where("file_id = '$file_id' and uid ='$login_user[uid]' ")->find();
+        $file = D("UploadFile")->where("file_id = '%d' and uid ='%d' ", array($file_id, $login_user['uid']))->find();
 
         if ($file) {
             $ret = D("Page")->deleteFile($file_id);
@@ -342,8 +504,8 @@ class AttachmentController extends BaseController
         $login_user = $this->checkLogin();
         $file_id = I("file_id/d") ? I("file_id/d") : 0;
         $page_id = I("page_id/d");
-        $file = D("UploadFile")->where("file_id = '$file_id' and uid ='$login_user[uid]' ")->find();
-        $page = M("Page")->where(" page_id = '$page_id' ")->find();
+        $file = D("UploadFile")->where("file_id = '%d' and uid ='%d' ", array($file_id, $login_user['uid']))->find();
+        $page = M("Page")->where(array('page_id' => $page_id))->find();
         if (!$this->checkItemEdit($login_user['uid'], $page['item_id'])) {
             $this->sendError(10103);
             return;

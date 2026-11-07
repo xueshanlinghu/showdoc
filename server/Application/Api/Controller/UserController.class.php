@@ -7,8 +7,34 @@ use Think\Controller;
 class UserController extends BaseController
 {
 
+    /**
+     * 获取登录态有效时长（秒数）
+     * 如果未配置或配置无效，返回默认值180天（60 * 60 * 24 * 180）
+     * 最小值为1天，最大值为3650天（10年）
+     * 
+     * @return int 登录态有效时长（秒数）
+     */
+    private function getSessionExpireTime()
+    {
+        $session_expire_days = D("Options")->get("session_expire_days");
+        
+        // 如果未配置或为false，使用默认值180天
+        if ($session_expire_days === false || $session_expire_days === '' || $session_expire_days === null) {
+            return 60 * 60 * 24 * 180; // 默认180天
+        }
+        
+        $session_expire_days = intval($session_expire_days);
+        
+        // 如果配置值无效（小于1或大于3650），使用默认值180天
+        if ($session_expire_days < 1 || $session_expire_days > 3650) {
+            return 60 * 60 * 24 * 180; // 默认180天
+        }
+        
+        // 返回配置的天数对应的秒数
+        return $session_expire_days * 24 * 60 * 60;
+    }
 
-    //注册
+    //注册。慢慢废弃，将主用registerByVerify()
     public function register()
     {
         $username = trim(I("username"));
@@ -22,6 +48,12 @@ class UserController extends BaseController
         }
         if (strlen($password) > 100) {
             $this->sendError(10101, "密码过长");
+            return;
+        }
+        // 验证密码强度
+        $password_validation = validate_strong_password($password);
+        if (!$password_validation['valid']) {
+            $this->sendError(10101, $password_validation['message']);
             return;
         }
         if (C('CloseVerify') || $v_code && $v_code == session('v_code')) {
@@ -47,12 +79,14 @@ class UserController extends BaseController
                         }
 
                         //设置自动登录
-                        $ret = D("User")->where("uid = '$new_uid' ")->find();
+                        $ret = D("User")->where(array('uid' => $new_uid))->find();
                         unset($ret['password']);
                         session("login_user", $ret);
-                        $token = D("UserToken")->createToken($ret['uid']);
+                        $token_expire_time = $this->getSessionExpireTime();
+                        $token = D("UserToken")->createToken($ret['uid'], $token_expire_time);
+                        $cookie_expire = time() + $token_expire_time;
                         if (version_compare(PHP_VERSION, '7.3.0', '>')) {
-                            setcookie('cookie_token', $token, array('expires' => time() + 60 * 60 * 24 * 180, 'httponly' => 'httponly', 'samesite' => 'Strict', 'path' => '/'));
+                            setcookie('cookie_token', $token, array('expires' => $cookie_expire, 'httponly' => 'httponly', 'samesite' => 'Strict', 'path' => '/'));
                         } else {
                             cookie('cookie_token', $token, array('expire' => 60 * 60 * 24 * 180, 'httponly' => 'httponly'));
                         }
@@ -88,6 +122,7 @@ class UserController extends BaseController
         $this->_importZip("../Public/SampleZip/databasedoc.zip", $uid);
         $this->_importZip("../Public/SampleZip/teamdoc.zip", $uid);
         $this->_importZip("../Public/SampleZip/spreadsheet.zip", $uid);
+        $this->_importZip("../Public/SampleZip/whiteboard.zip", $uid);
     }
 
     private function _importZip($file, $uid)
@@ -105,7 +140,7 @@ class UserController extends BaseController
         return false;
     }
 
-    //登录
+    //登录。慢慢废弃，将主用loginByVerify()
     public function login()
     {
         $username = trim(I("username"));
@@ -144,12 +179,22 @@ class UserController extends BaseController
                 //如果项目表是空的，则生成系统示例项目
                 $this->_importSample(1);
             }
+            // 如果因为历史原因，没有密码盐，则创建一个
+            if (!$ret['salt']) {
+                $salt = get_rand_str();
+                $password = encry_password($password, $salt);
+                D("User")->where("uid = '%d' ", array($ret['uid']))->save(array('salt' => $salt, 'password' => $password));
+            }
+
             unset($ret['password']);
+            unset($ret['salt']);
             session("login_user", $ret);
             D("User")->setLastTime($ret['uid']);
-            $token = D("UserToken")->createToken($ret['uid'], 60 * 60 * 24 * 180);
+            $token_expire_time = $this->getSessionExpireTime();
+            $token = D("UserToken")->createToken($ret['uid'], $token_expire_time);
+            $cookie_expire = time() + $token_expire_time;
             if (version_compare(PHP_VERSION, '7.3.0', '>')) {
-                setcookie('cookie_token', $token, array('expires' => time() + 60 * 60 * 24 * 180, 'httponly' => 'httponly', 'samesite' => 'Strict', 'path' => '/'));
+                setcookie('cookie_token', $token, array('expires' => $cookie_expire, 'httponly' => 'httponly', 'samesite' => 'Strict', 'path' => '/'));
             } else {
                 cookie('cookie_token', $token, array('expire' => 60 * 60 * 24 * 180, 'httponly' => 'httponly'));
             }
@@ -206,10 +251,19 @@ class UserController extends BaseController
                 $this->_importSample(1);
             }
 
+            // 如果因为历史原因，没有密码盐，则创建一个
+            if (!$ret['salt']) {
+                $salt = get_rand_str();
+                $password = encry_password($password, $salt);
+                D("User")->where("uid ='%d' ", array($ret['uid']))->save(array('salt' => $salt, 'password' => $password));
+            }
+
             unset($ret['password']);
+            unset($ret['salt']);
             session("login_user", $ret);
             D("User")->setLastTime($ret['uid']);
-            $token = D("UserToken")->createToken($ret['uid'], 60 * 60 * 24 * 180);
+            $token_expire_time = $this->getSessionExpireTime();
+            $token = D("UserToken")->createToken($ret['uid'], $token_expire_time);
             $this->sendResult(array(
                 "uid" => $ret['uid'],
                 "username" => $ret['username'],
@@ -244,6 +298,12 @@ class UserController extends BaseController
             $this->sendError(10101, "密码过长");
             return;
         }
+        // 验证密码强度
+        $password_validation = validate_strong_password($password);
+        if (!$password_validation['valid']) {
+            $this->sendError(10101, $password_validation['message']);
+            return;
+        }
         if (!D("Captcha")->check($captcha_id, $captcha)) {
             $this->sendError(10206, L('verification_code_are_incorrect'));
             return;
@@ -264,12 +324,14 @@ class UserController extends BaseController
                     }
 
                     //设置自动登录
-                    $ret = D("User")->where("uid = '$new_uid' ")->find();
+                    $ret = D("User")->where(array('uid' => $new_uid))->find();
                     unset($ret['password']);
                     session("login_user", $ret);
-                    $token = D("UserToken")->createToken($ret['uid']);
+                    $token_expire_time = $this->getSessionExpireTime();
+                    $token = D("UserToken")->createToken($ret['uid'], $token_expire_time);
+                    $cookie_expire = time() + $token_expire_time;
                     if (version_compare(PHP_VERSION, '7.3.0', '>')) {
-                        setcookie('cookie_token', $token, array('expires' => time() + 60 * 60 * 24 * 180, 'httponly' => 'httponly', 'samesite' => 'Strict', 'path' => '/'));
+                        setcookie('cookie_token', $token, array('expires' => $cookie_expire, 'httponly' => 'httponly', 'samesite' => 'Strict', 'path' => '/'));
                     } else {
                         cookie('cookie_token', $token, array('expire' => 60 * 60 * 24 * 180, 'httponly' => 'httponly'));
                     }
@@ -300,7 +362,7 @@ class UserController extends BaseController
         $login_user = $this->checkLogin();
         $uid = $login_user['uid'];
         $field = "uid,username,email,name,avatar,avatar_small,groupid";
-        $info = D("User")->where(" uid = '$uid' ")->field($field)->find();
+        $info = D("User")->where(array('uid' => $uid))->field($field)->find();
         $this->sendResult($info);
     }
 
@@ -312,12 +374,13 @@ class UserController extends BaseController
         $username = I("username");
         $field = "username , uid , name";
         if ($username) {
-            $username = \SQLite3::escapeString($username);
-            $where = " username like '%{$username}%'";
+            $like = safe_like($username);
+            $where = " username like '%s'";
+            $params = array($like);
         } else {
             $where = ' 1 = 1 ';
         }
-        $info = D("User")->where($where)->field($field)->select();
+        $info = isset($params) ? D("User")->where($where, $params)->field($field)->select() : D("User")->where($where)->field($field)->select();
         $this->sendResult($info);
     }
 
@@ -330,6 +393,12 @@ class UserController extends BaseController
         $new_password = I("new_password");
         if (strlen($new_password) > 100) {
             $this->sendError(10101, "密码过长");
+            return;
+        }
+        // 验证密码强度
+        $password_validation = validate_strong_password($new_password);
+        if (!$password_validation['valid']) {
+            $this->sendError(10101, $password_validation['message']);
             return;
         }
         $ret = D("User")->checkLogin($username, $password);
@@ -352,7 +421,7 @@ class UserController extends BaseController
         $login_user = $this->checkLogin();
         $confirm = I('post.confirm');
         if ($confirm || strstr($_SERVER['HTTP_USER_AGENT'], "Html5Plus")) {
-            D("UserToken")->where(" uid = '$login_user[uid]' ")->save(array("token_expire" => 0));
+            D("UserToken")->where(" uid = '%d' ", array($login_user['uid']))->save(array("token_expire" => 0));
             session("login_user", NULL);
             cookie('cookie_token', NULL);
             session(null);
@@ -375,7 +444,28 @@ class UserController extends BaseController
         $uid = $user['uid'];
         $name = I("post.name");
 
-        D("User")->where(" uid = '$uid' ")->save(array("name" => $name));
+        D("User")->where(array('uid' => $uid))->save(array("name" => $name));
+        $this->sendResult(array());
+    }
+
+    /**
+     * 获取用户的推送地址
+     */
+    public function getPushUrl()
+    {
+        $info = $this->checkLogin();
+        $push_url = D("UserSetting")->getPushUrl($info['uid']);
+        $this->sendResult($push_url);
+    }
+
+    /**
+     * 保存用户的推送地址
+     */
+    public function savePushUrl()
+    {
+        $info = $this->checkLogin();
+        $push_url = I("push_url");
+        D("UserSetting")->savePushUrl($info['uid'], $push_url);
         $this->sendResult(array());
     }
 

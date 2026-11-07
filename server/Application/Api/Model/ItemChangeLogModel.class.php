@@ -17,25 +17,26 @@ class ItemChangeLogModel extends BaseModel
             "op_object_type" => $op_object_type,
             "op_object_id" => $op_object_id,
             "op_object_name" => $op_object_name,
+            "remark" => $remark,
             "optime" => date("Y-m-d H:i:s"),
         );
         $this->add($data);
 
         //统计有多少条日志记录了
-        $count = $this->where(" item_id = '$item_id' ")->count();
+        $count = $this->where(array('item_id' => $item_id))->count();
         //每个项目只保留最多$keepNum个变更记录
         $keepCount = 300;
         if ($count > $keepCount) {
-            $ret = $this->where(" item_id = '$item_id' ")->limit($keepCount)->order("id desc")->select();
-            $this->where(" item_id = '$item_id' and id < " . $ret[$keepCount - 1]['id'])->delete();
+            $ret = $this->where(array('item_id' => $item_id))->limit($keepCount)->order("id desc")->select();
+            $this->where(" item_id = '%d' and id < %d", array($item_id, $ret[$keepCount - 1]['id']))->delete();
         }
     }
 
     public function getLog($item_id, $page = 1, $count = 15)
     {
         $item_id = intval($item_id);
-        $list = $this->where(" item_id = '{$item_id}' ")->order(" optime desc ")->page(" $page , $count ")->select();
-        $total = $this->where(" item_id = '{$item_id}' ")->count();
+        $list = $this->where(" item_id = '%d' ", array($item_id))->order(" optime desc ")->page(" $page , $count ")->select();
+        $total = $this->where(" item_id = '%d' ", array($item_id))->count();
         if ($list) {
             foreach ($list as $key => $value) {
                 $list[$key] = $this->renderOneLog($value);
@@ -56,7 +57,7 @@ class ItemChangeLogModel extends BaseModel
         $op_action_type = $one['op_action_type'];
         $uid = intval($one['uid']);
         $one['op_object_id'] = intval($one['op_object_id']);
-        $user_array = D("User")->where(" uid = {$uid} ")->Field('username,name')->find();
+        $user_array = D("User")->where(array('uid' => $uid))->Field('username,name')->find();
         $one['username'] = $user_array['username'];
         $one['name'] = $user_array['name'];
         $oper = $user_array['username'];
@@ -75,11 +76,17 @@ class ItemChangeLogModel extends BaseModel
             case 'delete':
                 $one['op_action_type_desc'] = '删除';
                 break;
+            case 'export':
+                $one['op_action_type_desc'] = '导出';
+                break;
             case 'binding':
                 $one['op_action_type_desc'] = '绑定';
                 break;
             case 'unbound':
                 $one['op_action_type_desc'] = '解绑';
+                break;
+            case 'drag':
+                $one['op_action_type_desc'] = '拖曳修改';
                 break;
             default:
                 $one['op_action_type_desc'] = '未定义';
@@ -93,11 +100,17 @@ class ItemChangeLogModel extends BaseModel
             case 'catalog':
                 $one['op_object_type_desc'] = '目录';
                 break;
+            case 'item':
+                $one['op_object_type_desc'] = '项目';
+                break;
             case 'team':
                 $one['op_object_type_desc'] = '团队';
                 break;
             case 'member':
                 $one['op_object_type_desc'] = '成员';
+                break;
+            case 'tree':
+                $one['op_object_type_desc'] = '目录树';
                 break;
             default:
                 $one['op_object_type_desc'] = '未定义';
